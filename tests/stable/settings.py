@@ -19,23 +19,39 @@ LOGGING = {
     "disable_existing_loggers": False,
     "formatters": {
         "default": {
-            "format": "{asctime} [{levelname:5}] {name} - {message} - {extra.celery}",
+            "format": "{asctime} [{levelname:5}] {name} - {message}",
             "style": "{",
         },
+        "json": {
+            "class": "barnlog.logging.JsonFormatter",
+            "format": "{asctime} [{levelname:5}] {name} - {message}",
+            "style": "{",
+        },
+
     },
     "handlers": {
-        "console": {"level": "DEBUG", "class": "logging.StreamHandler", "formatter": "default"},
-    },
-    "loggers": {
         "console": {
-            "handlers": ["console"],
-            "propagate": False,
+            "level": "DEBUG",
+            "class": "logging.StreamHandler",
+            "formatter": "default"
+        },
+        "http": {
+            "level": "DEBUG",
+            "class": "barnlog.logging.HTTPHandler",
+            "formatter": "json",
+            "host": "localhost:8000",
+            "url": "/log/ingest",
         },
     },
-    "root": {
-        "level": "INFO",
-        "handlers": ["console"],
-    }
+    "loggers": {
+        # "access": {"handlers": ["console"], "propagate": False},
+        # "console": {"handlers": ["console"], "propagate": False},
+        # "ingest": {"handlers": ["console"], "propagate": False},
+        "celery": {"handlers": ["http"]},
+        # "django": {"handlers": ["console"], "propagate": False}
+        "barnlog.http_client": {"handlers": ["http"]},
+    },
+    "root": {"level": "INFO", "handlers": ["console"]}
 }
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.

@@ -5,16 +5,20 @@ from typing import Mapping
 
 import requests
 
+log = logging.getLogger("barnlog.http_client")
+
+
+# from barnlog.requests import LoggedSession
+# s = LoggedSession()
+# s.get('https://httpbin.org/headers', headers={'x-test2': 'true'})
 
 class LoggedSession(requests.Session):
-    log = logging.getLogger("barnlog.http")
-    with_body = True
     sensitive_headers = ["authorization", "cookie"]
 
-    def __init__(self, with_body: bool | None = None) -> None:
+    def __init__(self, with_body: bool = True, log: logging.Logger = log) -> None:
         super().__init__()
-        if with_body is not None:
-            self.with_body = with_body
+        self.log = log
+        self.with_body = with_body
 
     def send(self, request: requests.PreparedRequest, **kwargs):
         extra = {
@@ -30,6 +34,7 @@ class LoggedSession(requests.Session):
                       extra={"extra": extra})
         if self.log.isEnabledFor(logging.DEBUG):
             self.log.debug("request: %s", self._dumps(extra["request"]))
+
         try:
             response = super().send(request, **kwargs)
         except requests.RequestException as e:
@@ -85,16 +90,15 @@ class LoggedSession(requests.Session):
             return {
                 name: value
                 for name, value in headers.items()
-                if not self._is_header_sensitive(name)
+                if not self._is_sensitive_header(name)
             }
         else:
             return "<sensitive>"
 
-    def _is_header_sensitive(self, name: str) -> bool:
+    def _is_sensitive_header(self, name: str) -> bool:
         if self.log.isEnabledFor(logging.DEBUG):
             return False
-        name = name.lower()
-        return name in self.sensitive_headers
+        return name.lower() in self.sensitive_headers
 
     def _get_request_body(self, request):
         if self.with_body:
@@ -123,5 +127,5 @@ class LoggedSession(requests.Session):
         else:
             return "<sensitive>"
 
-    def _dumps(self, data) -> str:
+    def _dumps(self, data: dict) -> str:
         return json.dumps(data, indent=2, ensure_ascii=False)

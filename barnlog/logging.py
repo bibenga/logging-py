@@ -1,12 +1,11 @@
+import base64
+import json
 import logging
 import logging.config
 import logging.handlers
 import platform
-import queue
 import sys
-import threading
-
-import requests
+from typing import Any
 
 
 def logging_config(value: dict) -> None:
@@ -15,55 +14,36 @@ def logging_config(value: dict) -> None:
 
 
 class ExtraLogRecord(logging.LogRecord):
-    def __init__(self, name, level, pathname, lineno, msg, args, exc_info, func, sinfo):
-        super().__init__(name, level, pathname, lineno, msg, args, exc_info, func, sinfo)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
 
         from barnlog.celery import get_celery_task_info
-        from barnlog.django import get_django_user_info, get_django_request_info
+        from barnlog.django import get_django_request_info, get_django_user_info
+
+        self.app_name = "barnlog"
+        self.python_version = sys.version
+        self.hostname = platform.node()
 
         self.user = get_django_user_info()
-        self.http = get_django_request_info()
+        self.http_server = get_django_request_info()
         self.celery = get_celery_task_info()
 
 
-class HttpHandler(logging.Handler):
-    console = logging.getLogger("console")
+class JsonFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        super().format(record)
+        return json.dumps(self.serialize(record), ensure_ascii=True)
 
-    def __init__(
-        self,
-        *args,
-        app_name: str = "backend",
-        url: str = "http://localhost:2021/log/ingest",
-        timeout: int = 5,
-        sync: bool = True,
-        queue_size: int = 100,
-        **kwargs
-    ) -> None:
-        super().__init__(*args, **kwargs)
-
-        self._app_name = app_name
-        self._hostname = platform.node()
-        self._python = sys.version
-
-        self._session = requests.Session()
-        self._url = url
-        self._timeout = timeout
-
-        self._sync = sync
-        if not self._sync:
-            self._log_queue = queue.Queue(maxsize=queue_size)
-            self._thread = threading.Thread(target=self._process, name="log-processor", daemon=True)
-            self._thread.start()
-
-    def mapLogRecord(self, record: logging.LogRecord):
+    def serialize(self, record: logging.LogRecord) -> dict:
         exc_text = record.exc_text
         if record.exc_info and not record.exc_text:
-            exc_text = self.formatter.formatException(record.exc_info)
+            exc_text = self.formatException(record.exc_info)
+
         stack_info = None
         if record.stack_info:
-            stack_info = self.formatter.formatStack(record.stack_info)
+            stack_info = self.formatStack(record.stack_info)
 
-        t = self.formatter.formatTime(record, "%Y-%m-%dT%H:%M:%S")
+        t = self.formatTime(record, "%Y-%m-%dT%H:%M:%S")
         t = "%s.%03dZ" % (t, record.msecs)
 
         res = {
@@ -72,8 +52,9 @@ class HttpHandler(logging.Handler):
             "name": record.name,
             "message": record.message,
 
-            "app": self._app_name,
-            "hostname": self._hostname,
+            "app": getattr(record, "app_name", None),
+            "python":  getattr(record, "python_version", None),
+            "hostname": getattr(record, "hostname", None),
             "process": {
                 "id": record.process,
                 "name": record.processName,
@@ -91,14 +72,13 @@ class HttpHandler(logging.Handler):
             "func_name": record.funcName,
             "exc_text": exc_text,
             "stack_info": stack_info,
-            "python": self._python,
         }
 
         if hasattr(record, "user") and record.user:
             res["user"] = record.user
 
-        if hasattr(record, "http") and record.http:
-            res["http"] = record.http
+        if hasattr(record, "http_server") and record.http_server:
+            res["http_server"] = record.http_server
 
         if hasattr(record, "celery") and record.celery:
             res["celery"] = record.celery
@@ -108,51 +88,47 @@ class HttpHandler(logging.Handler):
 
         return res
 
+
+class HTTPHandler(logging.handlers.HTTPHandler):
+    def __init__(self, host, url, secure=False, credentials=None, context=None,
+                 token=None, timeout=None):
+        super().__init__(host, url, method="POST", secure=secure, credentials=credentials,
+                         context=context)
+        self.token = token
+        self.timeout = float(timeout) if timeout else 1
+        if self.credentials and self.token:
+            raise ValueError("credentials or token, not both")
+
     def emit(self, record):
-        if self._sync:
-            self._post([self.mapLogRecord(record)])
-        else:
-            try:
-                data = self.mapLogRecord(record)
-                self._log_queue.put(data, True, 0.5)
-            except queue.Full:
-                self.handleError(record)
-
-    def close(self) -> None:
-        if not self._sync:
-            self._log_queue.put(None, True)
-            try:
-                self._thread.join(10)
-            except:
-                self.console.fatal("HttpHandler - failed during stop", exc_info=True)
-        return super().close()
-
-    def _process(self):
-        # if we enable this logging then we receive some strange deadlock
-        self.console.info("HttpHandler - queue processor started")
-        while True:
-            try:
-                obj = self._log_queue.get(True, 1)
-            except queue.Empty:
-                continue
-
-            if obj is None:
-                break
-
-            self._post([obj])
-        self.console.info("HttpHandler - queue processor terminated")
-
-    def _post(self, data) -> None:
         try:
-            response = self._session.post(self._url, json=data, timeout=self._timeout)
-            response.raise_for_status()
-        except:
-            self.console.fatal("can't send request", exc_info=True)
+            data = self.format(record).encode('utf-8')
+            h = self.getConnection(self.host, self.secure)
+            h.timeout = self.timeout
+            h.putrequest(self.method, self.url)
+            h.putheader("Content-Type", "application/json")
+            h.putheader("Content-length", str(len(data)))
+            if self.token:
+                s = f'Token {self.token}'
+                h.putheader('Authorization', s)
+            elif self.credentials:
+                s = ('%s:%s' % self.credentials).encode('utf-8')
+                s = 'Basic ' + base64.b64encode(s).strip().decode('ascii')
+                h.putheader('Authorization', s)
+            h.endheaders()
+            h.send(data)
+            r = h.getresponse()
+            if not (200 <= r.status < 300):
+                raise RuntimeError(f"response status is bad")
+        except Exception:
+            self.handleError(record)
 
 
 class QueueHandler(logging.handlers.QueueHandler):
     def enqueue(self, record: logging.LogRecord) -> None:
         self.queue.put(record)
+
+    def prepare(self, record: logging.LogRecord) -> Any:
+        return self.format(record)
 
 
 class QueueListener(logging.handlers.QueueListener):
