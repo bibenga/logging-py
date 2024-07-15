@@ -3,14 +3,31 @@ import json
 import logging
 import logging.config
 import logging.handlers
+import os
 import platform
 import sys
+from functools import cache
 from typing import Any
 
 
 def logging_config(value: dict) -> None:
     logging.setLogRecordFactory(ExtraLogRecord)
     logging.config.dictConfig(value)
+
+
+@cache
+def get_app_name() -> str:
+    return os.getenv("APP_NAME") or "barnlog"
+
+
+@cache
+def get_version() -> str:
+    return os.getenv("APP_VERSION") or "0.0.0"
+
+
+@cache
+def get_hostname() -> str:
+    return platform.node()
 
 
 class ExtraLogRecord(logging.LogRecord):
@@ -20,9 +37,10 @@ class ExtraLogRecord(logging.LogRecord):
         from barnlog.celery import get_celery_task_info
         from barnlog.django import get_django_request_info, get_django_user_info
 
-        self.app_name = "barnlog"
-        self.python_version = sys.version
-        self.hostname = platform.node()
+        self.app_name = get_app_name()
+        self.app_version = get_version()
+        # self.python_version = sys.version
+        self.hostname = get_hostname()
 
         self.user = get_django_user_info()
         self.http_server = get_django_request_info()
@@ -52,8 +70,9 @@ class JsonFormatter(logging.Formatter):
             "name": record.name,
             "message": record.message,
 
-            "app": getattr(record, "app_name", None),
-            "python":  getattr(record, "python_version", None),
+            "app_name": getattr(record, "app_name", None),
+            "version": getattr(record, "app_version", None),
+            # "python":  getattr(record, "python_version", None),
             "hostname": getattr(record, "hostname", None),
             "process": {
                 "id": record.process,
@@ -77,14 +96,20 @@ class JsonFormatter(logging.Formatter):
         if hasattr(record, "user") and record.user:
             res["user"] = record.user
 
+        # if hasattr(record, "http_server") and record.http_server:
+        #     res["http_server"] = record.http_server
+        # if hasattr(record, "celery") and record.celery:
+        #     res["celery"] = record.celery
+        # if hasattr(record, "extra") and record.extra:
+        #     res["extra"] = record.extra
+
+        extra = getattr(record, "extra", None) or {}
         if hasattr(record, "http_server") and record.http_server:
-            res["http_server"] = record.http_server
-
+            extra["http_server"] = record.http_server
         if hasattr(record, "celery") and record.celery:
-            res["celery"] = record.celery
-
-        if hasattr(record, "extra") and record.extra:
-            res["extra"] = record.extra
+            extra["celery"] = record.celery
+        if extra:
+            res["extra"] = extra
 
         return res
 

@@ -85,8 +85,6 @@ class LoggedSession(requests.Session):
 
     def _get_headers(self, headers: Mapping) -> str | dict[str, str]:
         if self.with_body:
-            # add filter for sensitive headers
-            # return headers
             return {
                 name: value
                 for name, value in headers.items()
