@@ -10,19 +10,12 @@ from functools import cache
 from typing import Any
 
 
-def logging_config(value: dict) -> None:
-    logging.setLogRecordFactory(ExtraLogRecord)
-    logging.config.dictConfig(value)
-
-
-@cache
 def get_app_name() -> str:
-    return os.getenv("APP_NAME") or "barnlog"
+    return os.getenv("APP_NAME", "barnlog")
 
 
-@cache
 def get_version() -> str:
-    return os.getenv("APP_VERSION") or "0.0.0"
+    return os.getenv("APP_VERSION", "0.0.0")
 
 
 @cache
@@ -30,87 +23,97 @@ def get_hostname() -> str:
     return platform.node()
 
 
-class ExtraLogRecord(logging.LogRecord):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-        from barnlog.celery import get_celery_task_info
-        from barnlog.django import get_django_request_info, get_django_user_info
-
-        self.app_name = get_app_name()
-        self.app_version = get_version()
-        # self.python_version = sys.version
-        self.hostname = get_hostname()
-
-        self.user = get_django_user_info()
-        self.http_server = get_django_request_info()
-        self.celery = get_celery_task_info()
-
-
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         super().format(record)
-        return json.dumps(self.serialize(record), ensure_ascii=True)
+        return json.dumps(self.serialize(record), ensure_ascii=False, sort_keys=True)
 
     def serialize(self, record: logging.LogRecord) -> dict:
-        exc_text = record.exc_text
-        if record.exc_info and not record.exc_text:
-            exc_text = self.formatException(record.exc_info)
-
-        stack_info = None
-        if record.stack_info:
-            stack_info = self.formatStack(record.stack_info)
-
         t = self.formatTime(record, "%Y-%m-%dT%H:%M:%S")
         t = "%s.%03dZ" % (t, record.msecs)
 
+        app_name = get_app_name()
+        app_version = get_version()
+        python_version = sys.version
+        hostname = get_hostname()
+
         res = {
             "@timestamp": t,
-            "level": record.levelname,
-            "name": record.name,
+            "ecs.version": "1.2.0",
+
+            "tags": [tag for tag in [app_name] if tag],
+
+            "log.logger": record.name,
+            "log.level": record.levelname,
+            "log.origin.file.name": record.pathname,
+            "log.origin.function": record.funcName,
+            "log.origin.file.line": record.lineno,
+
             "message": record.message,
 
-            "app_name": getattr(record, "app_name", None),
-            "version": getattr(record, "app_version", None),
-            # "python":  getattr(record, "python_version", None),
-            "hostname": getattr(record, "hostname", None),
-            "process": {
-                "id": record.process,
-                "name": record.processName,
-            },
-            "thread": {
-                "id": record.thread,
-                "name": record.threadName,
-            },
-            "task": {  # asyncio
-                "name": record.taskName,
-            },
-            "pathname": record.pathname,
-            "module": record.module,
-            "filename": record.filename,
-            "func_name": record.funcName,
-            "exc_text": exc_text,
-            "stack_info": stack_info,
+            "process.pid": record.process,
+            "process.name": record.processName,
+            "process.uptime": record.relativeCreated / 1000,
+            "process.thread.id": record.thread,
+            "process.thread.name": f"{record.threadName}:{record.taskName}" if record.taskName else record.threadName,
+
+            # labels is a flat dict[str, str]
+            "labels.hostname": hostname,
+            "labels.python_version": python_version,
+            "labels.app_name": app_name,
+            "labels.app_version": app_version,
         }
 
-        if hasattr(record, "user") and record.user:
-            res["user"] = record.user
+        if record.exc_info:
+            exc_text = record.exc_text
+            if not record.exc_text:
+                exc_text = self.formatException(record.exc_info)
 
-        # if hasattr(record, "http_server") and record.http_server:
-        #     res["http_server"] = record.http_server
-        # if hasattr(record, "celery") and record.celery:
-        #     res["celery"] = record.celery
-        # if hasattr(record, "extra") and record.extra:
-        #     res["extra"] = record.extra
+            stack_info = None
+            if record.stack_info:
+                stack_info = self.formatStack(record.stack_info)
 
-        extra = getattr(record, "extra", None) or {}
-        if hasattr(record, "http_server") and record.http_server:
-            extra["http_server"] = record.http_server
-        if hasattr(record, "celery") and record.celery:
-            extra["celery"] = record.celery
-        if extra:
-            res["extra"] = extra
+            res["error.message"] = exc_text
+            res["error.stack_trace"] = stack_info
+            if record.exc_info and record.exc_info[0]:
+                error_cls = record.exc_info[0]
+                res["error.type"] = f"{error_cls.__module__}.{error_cls.__name__}"
 
+        if hasattr(record, "extra") and record.extra:
+            for key, value in record.extra.items():
+                if value is None or isinstance(value, str):
+                    pass
+                elif isinstance(value, (bool, int, float)):
+                    if key.startswith("labels."):
+                        value = str(value)
+                else:
+                    value = str(value)
+                res[key] = value
+
+        return res
+
+
+class UnflatJsonFormatter(JsonFormatter):
+    def serialize(self, record: logging.LogRecord) -> dict:
+        return self.unflat(super().serialize(record))
+
+    def unflat(self, value: dict[str, Any]) -> dict:
+        res = {}
+        for key, value in value.items():
+            if "." in key:
+                subkeys = key.split(".")
+                obj = res
+                for pos, subkey in enumerate(subkeys):
+                    if pos == len(subkeys) - 1:
+                        break
+                    if subkey in obj:
+                        obj = obj[subkey]
+                    else:
+                        obj[subkey] = {}
+                        obj = obj[subkey]
+                obj[subkeys[-1]] = value
+            else:
+                res[key] = value
         return res
 
 

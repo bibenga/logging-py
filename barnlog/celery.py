@@ -1,17 +1,11 @@
+import logging
+import logging.config
 from typing import Any
 
-from barnlog.logging import logging_config
-from barnlog.utils import Local
-
-_celery_task_info = Local()
-
-
-def get_celery_task_info() -> dict[str, Any] | None:
-    return getattr(_celery_task_info, "value", None)
+from celery import Task, signals, states
 
 
 def setup_celery_logging(setup_logging: bool = True) -> None:
-    from celery import Task, signals
     if setup_logging:
         signals.setup_logging.connect(on_setup_logging, weak=False)
     signals.task_prerun.connect(on_task_prerun, weak=False)
@@ -21,18 +15,43 @@ def setup_celery_logging(setup_logging: bool = True) -> None:
 def on_setup_logging(**kwargs):
     try:
         from django.conf import settings
-        logging_config(settings.LOGGING)
+        logging.config.dictConfig(settings.LOGGING)
     except ImportError:
         pass
 
 
-def on_task_prerun(task_id: Any, task: Any, **kwargs):
-    _celery_task_info.value = {
-        "id": task_id,
-        "name": task.name,
-    }
+logger = logging.getLogger(__name__)
 
 
-def on_task_postrun(**kwargs):
-    if hasattr(_celery_task_info, "value"):
-        del _celery_task_info.value
+def on_task_prerun(task_id: Any, task: Task, **kwargs):
+    logger.info(
+        "Task %r started", task_id,
+        extra={
+            "extra": {
+                "labels.celery_task_id": str(task_id),
+                "labels.celery_task_name": task.name,
+            },
+        },
+    )
+
+
+def on_task_postrun(task_id: Any, task: Task, **kwargs):
+    state = kwargs.get("state")
+    if state in states.EXCEPTION_STATES:
+        level = logging.ERROR
+        exc_info = True
+    else:
+        level = logging.INFO
+        exc_info = False
+    logger.log(
+        level,
+        "Task %r finished with state %s", task_id, state,
+        exc_info=exc_info,
+        extra={
+            "extra": {
+                "labels.celery_task_id": str(task_id),
+                "labels.celery_task_name": task.name,
+                "labels.celery_task_state": state,
+            },
+        },
+    )

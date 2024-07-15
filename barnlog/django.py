@@ -4,51 +4,14 @@ import os
 import platform
 import threading
 import time
-from typing import Any
 
-from barnlog.utils import Local
-
-
-def get_django_user_info() -> dict[str, Any] | None:
-    # return getattr(_django_http_request_context, "value", None)
-    if hasattr(_django_request, "value"):
-        request = _django_request.value
-        user = getattr(request, "user", None)
-        if user and user.is_authenticated:
-            return {
-                "id": user.id,
-                "username": user.username if user.username else None,
-                "is_authenticated": user.is_authenticated,
-            }
-        return {
-            "id": None,
-            "username": "",
-            "is_authenticated": False,
-        }
-
-
-# django request handler logging context
-_django_request = Local()
-
-
-def get_django_request():
-    if hasattr(_django_request, "value"):
-        return _django_request.value
-
-
-def get_django_request_info() -> dict[str, Any] | None:
-    if hasattr(_django_request, "value"):
-        request = _django_request.value
-        return {
-            "request_id": getattr(request, "request_id", None),
-            "method": request.method,
-            "path": request.path,
-        }
+logger = logging.getLogger(__name__)
 
 
 def request_id_middleware(get_response):
     # One-time configuration and initialization.
     from django.conf import settings
+
     # from django.utils.crypto import get_random_string
 
     REQUEST_ID_HEADER = getattr(settings, "REQUEST_ID_HEADER", "HTTP_X_REQUEST_ID")
@@ -77,38 +40,64 @@ def request_id_middleware(get_response):
     def middleware(request):
         request_id = get_request_id(request)
         request.request_id = request_id
-        _django_request.value = request
-        try:
-            response = get_response(request)
-        finally:
-            if hasattr(_django_request, "value"):
-                del _django_request.value
-
-        return response
+        return get_response(request)
 
     return middleware
 
 
 def access_log_middleware(get_response):
-    from django.conf import settings
-
-    access = logging.getLogger(getattr(settings, "REQUEST_LOGGER_NAME", "access"))
-
     def middleware(request):
         request_id = getattr(request, "request_id", None)
-        access.info("Start request %s: %s %s", request_id, request.method, request.path)
+        basic = {
+            "http.request.id": request_id,
+            "http.request.method": request.method,
+            "url.path": request.path,
+        }
+
+        def _get_user():
+            return {
+                "user.id": request.user.pk if request.user else None,
+                "user.name": request.user.username if request.user else None,
+            }
+
+        logger.info(
+            "Request %r started: %s %s", request_id, request.method, request.path,
+            extra={
+                "extra": {
+                    **basic,
+                    **_get_user(),
+                }
+            }
+        )
         start = time.time()
         try:
             response = get_response(request)
-        except Exception as e:
+        except:
             duration = time.time() - start
-            access.error("Failed request %s: duration=%.4f, error=%s",
-                         request_id, duration, str(e), exc_info=True)
+            logger.fatal(
+                "Request %r failed: duration=%.4fs",
+                request_id, duration,
+                extra={
+                    "extra": {
+                        **basic,
+                        **_get_user(),
+                    }
+                }
+            )
             raise
         else:
             duration = time.time() - start
-            access.info("Processed request %s: duration=%.4f, status_code=%s",
-                        request_id, duration, response.status_code)
+            logger.info(
+                "Request %r processed: status_code=%s, duration=%.4fs",
+                request_id, duration, response.status_code,
+                extra={
+                    "extra": {
+                        **basic,
+                        **_get_user(),
+                        "http.response.status_code": response.status_code,
+                    }
+                }
+            )
         return response
 
     return middleware

@@ -1,4 +1,5 @@
 django
+psycopg[binary]
 
 celery
 redis
@@ -10,4 +11,4 @@ fastapi
 pytest
 pytest-django
 pytest-mock
-psycopg[binary]
+requests-mock

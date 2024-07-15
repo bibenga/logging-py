@@ -13,7 +13,7 @@ https://docs.djangoproject.com/en/5.0/ref/settings/
 import os
 from pathlib import Path
 
-LOGGING_CONFIG = "barnlog.logging.logging_config"
+# LOGGING_CONFIG = "barnlog.logging.logging_config"
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
@@ -33,7 +33,8 @@ LOGGING = {
         "console": {
             "level": "DEBUG",
             "class": "logging.StreamHandler",
-            "formatter": "default"
+            # "formatter": "default"
+            "formatter": "json"
         },
         "http": {
             "level": "DEBUG",
@@ -47,9 +48,9 @@ LOGGING = {
         # "access": {"handlers": ["console"], "propagate": False},
         # "console": {"handlers": ["console"], "propagate": False},
         # "ingest": {"handlers": ["console"], "propagate": False},
-        "celery": {"handlers": ["http"]},
+        # "celery": {"handlers": ["http"]},
         # "django": {"handlers": ["console"], "propagate": False}
-        "barnlog.http_client": {"handlers": ["http"]},
+        # "barnlog.http_client": {"handlers": ["http"]},
     },
     "root": {"level": "INFO", "handlers": ["console"]}
 }
@@ -83,12 +84,12 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "barnlog.django.request_id_middleware",
-    "barnlog.django.access_log_middleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "barnlog.django.access_log_middleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
