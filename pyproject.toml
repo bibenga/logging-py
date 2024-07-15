@@ -1,0 +1,46 @@
+[project]
+name = "barnlog"
+version = "0.1.0"
+authors = [
+#  { name="Bibenga", email="" },
+]
+description = "Logging support"
+license = {text = "MIT"}
+readme = "README.md"
+keywords = ["django"]
+classifiers = [
+    'Environment :: Web Environment',
+    'Framework :: Django',
+    'Intended Audience :: Developers',
+    'License :: OSI Approved :: MIT License',
+    "Operating System :: OS Independent",
+    'Programming Language :: Python',
+    'Programming Language :: Python :: 3',
+    'Programming Language :: Python :: 3.10',
+    'Programming Language :: Python :: 3.11',
+    'Programming Language :: Python :: 3.12',
+    'Topic :: Software Development :: Libraries :: Python Modules',
+]
+
+requires-python = ">=3.10"
+dependencies = [
+]
+[project.optional-dependencies]
+test = [
+    "pytest",
+    "pytest-django",
+    "pytest-mock",
+    "psycopg[binary]"
+]
+
+[project.urls]
+Homepage = "https://github.com/bibenga/logging-py"
+Issues = "https://github.com/bibenga/logging-py/issues"
+
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["pg_lo_storage"]
+

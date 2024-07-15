@@ -1,0 +1,13 @@
+django
+
+celery
+redis
+
+requests
+
+fastapi
+
+pytest
+pytest-django
+pytest-mock
+psycopg[binary]
